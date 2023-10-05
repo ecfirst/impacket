@@ -1,6 +1,6 @@
 # Impacket - Collection of Python classes for working with network protocols.
 #
-# Copyright (C) 2022 Fortra. All rights reserved.
+# Copyright (C) 2023 Fortra. All rights reserved.
 #
 # This software is provided under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -590,8 +590,8 @@ def queryPathInformation(path, filename, level):
                 infoRecord['PositionInformation']['CurrentByteOffset'] = 0 #
                 infoRecord['ModeInformation']['mode'] = mode
                 infoRecord['AlignmentInformation']['AlignmentRequirement'] = 0 #
-                infoRecord['NameInformation']['FileName'] = fileName
-                infoRecord['NameInformation']['FileNameLength'] = len(fileName)
+                infoRecord['NameInformation']['FileName'] = fileName.encode('utf-16le')
+                infoRecord['NameInformation']['FileNameLength'] = len(fileName.encode('utf-16le'))
             elif level == smb2.SMB2_FILE_NETWORK_OPEN_INFO:
                 infoRecord = smb.SMBFileNetworkOpenInfo()
                 infoRecord['CreationTime'] = getFileTime(ctime)
@@ -606,7 +606,7 @@ def queryPathInformation(path, filename, level):
                     infoRecord['FileAttributes'] = smb.ATTR_NORMAL | smb.ATTR_ARCHIVE
             elif level == smb.SMB_QUERY_FILE_EA_INFO or level == smb2.SMB2_FILE_EA_INFO:
                 infoRecord = smb.SMBQueryFileEaInfo()
-            elif level == smb2.SMB2_FILE_STREAM_INFO:
+            elif level == smb.SMB_QUERY_FILE_STREAM_INFO or level == smb2.SMB2_FILE_STREAM_INFO:
                 infoRecord = smb.SMBFileStreamInformation()
             else:
                 LOG.error('Unknown level for query path info! 0x%x' % level)
@@ -3437,8 +3437,11 @@ class SMB2Commands:
                     if informationLevel == smb2.SMB2_FILE_DISPOSITION_INFO:
                         infoRecord = smb.SMBSetFileDispositionInfo(setInfo['Buffer'])
                         if infoRecord['DeletePending'] > 0:
-                            # Mark this file for removal after closed
-                            connData['OpenedFiles'][fileID]['DeleteOnClose'] = True
+                            if os.path.isdir(pathName) and os.listdir(pathName):
+                                errorCode = STATUS_DIRECTORY_NOT_EMPTY
+                            else:
+                                # Mark this file for removal after closed
+                                connData['OpenedFiles'][fileID]['DeleteOnClose'] = True
                     elif informationLevel == smb2.SMB2_FILE_BASIC_INFO:
                         infoRecord = smb.SMBSetFileBasicInfo(setInfo['Buffer'])
                         # Creation time won't be set,  the other ones we play with.
@@ -3476,6 +3479,10 @@ class SMB2Commands:
                         except Exception as e:
                             smbServer.log("smb2SetInfo: %s" % e, logging.ERROR)
                             errorCode = STATUS_ACCESS_DENIED
+                    elif informationLevel == smb2.SMB2_FILE_ALLOCATION_INFO:
+                        # See https://github.com/samba-team/samba/blob/master/source3/smbd/smb2_trans2.c#LL5201C8-L5201C39
+                        smbServer.log("Warning: SMB2_FILE_ALLOCATION_INFO not implemented")
+                        errorCode = STATUS_SUCCESS
                     else:
                         smbServer.log('Unknown level for set file info! 0x%x' % informationLevel, logging.ERROR)
                         # UNSUPPORTED
@@ -3725,6 +3732,20 @@ class SMB2Commands:
             data = searchResult[nItem].getData()
             lenData = len(data)
             padLen = (8 - (lenData % 8)) % 8
+
+            # For larger directory we might reach the OutputBufferLength so we need to set 
+            # the NextEntryOffset to 0 for the last entry the will fit the buffer
+            try:
+                # Check if the next data will exceed the OutputBufferLength
+                nextData = searchResult[nItem + 1].getData()
+                lenNextData = len(nextData)
+                nextTotalData = totalData + lenData + padLen + lenNextData
+                if nextTotalData >= queryDirectoryRequest['OutputBufferLength']:
+                    # Set the NextEntryOffset to 0 and get the data again
+                    searchResult[nItem]['NextEntryOffset'] = 0
+                    data = searchResult[nItem].getData()
+            except IndexError:
+                pass
 
             if (totalData + lenData) >= queryDirectoryRequest['OutputBufferLength']:
                 connData['OpenedFiles'][fileID]['Open']['EnumerationLocation'] -= 1
