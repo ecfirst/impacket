@@ -254,7 +254,7 @@ if __name__ == '__main__':
     print(version.BANNER)
     #Parse arguments
     parser = argparse.ArgumentParser(add_help = False, description = "For every connection received, this module will "
-                                    "try to relay that connection to specified target(s) system or the original client")
+                                    "try to relay that connection to specified target(s) system or the original client (ecfirst)")
     parser._optionals.title = "Main options"
 
     #Main arguments
