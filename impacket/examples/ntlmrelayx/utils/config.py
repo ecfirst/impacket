@@ -57,6 +57,7 @@ class NTLMRelayxConfig:
         self.interactive = False
         self.enumLocalAdmins = False
         self.SMBServerChallenge = None
+        self.addComputerSMB = False
 
         # RPC options
         self.rpc_mode = None
