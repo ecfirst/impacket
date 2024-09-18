@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Impacket - Collection of Python classes for working with network protocols.
 #
 # Copyright Fortra, LLC and its affiliated companies 
@@ -258,12 +258,12 @@ if __name__ == '__main__':
 
     print(version.BANNER)
     #Parse arguments
-    parser = argparse.ArgumentParser(escription = "For every connection received, this module will "
+    parser = argparse.ArgumentParser(add_help=False, description = "For every connection received, this module will "
                                     "try to relay that connection to specified target(s) system or the original client (ecfirst)")
     parser._optionals.title = "Main options"
 
     #Main arguments
-    #parser.add_argument("-h","--help", action="help", help='show this help message and exit')
+    parser.add_argument("-h","--help", action="help", help='show this help message and exit')
     parser.add_argument('-ts', action='store_true', help='Adds timestamp to every logging output')
     parser.add_argument('-debug', action='store_true', help='Turn DEBUG output ON')
     parser.add_argument('-t',"--target", action='store', metavar = 'TARGET', help="Target to relay the credentials to, "
@@ -302,10 +302,10 @@ if __name__ == '__main__':
     parser.add_argument('-of','--output-file', action='store',help='base output filename for encrypted hashes. Suffixes '
                                                                    'will be added for ntlm and ntlmv2')
     parser.add_argument('-codec', action='store', help='Sets encoding used (codec) from the target\'s output (default '
-                                                       '"%s"). If errors are detected, run chcp.com at the target, '
+                                                       '). If errors are detected, run chcp.com at the target, '
                                                        'map the result with '
                                                        'https://docs.python.org/3/library/codecs.html#standard-encodings and then execute ntlmrelayx.py '
-                                                       'again with -codec and the corresponding codec ' % sys.getdefaultencoding())
+                                                       'again with -codec and the corresponding codec ')
     parser.add_argument('-smb2support', action="store_true", default=False, help='SMB2 Support')
     parser.add_argument('-ntlmchallenge', action="store", default=None, help='Specifies the NTLM server challenge used by the '
                                                                              'SMB Server (16 hex bytes long. eg: 1122334455667788)')
@@ -369,7 +369,7 @@ if __name__ == '__main__':
     ldapoptions.add_argument('--dump-laps', action='store_true', required=False, help='Attempt to dump any LAPS passwords readable by the user')
     ldapoptions.add_argument('--dump-gmsa', action='store_true', required=False, help='Attempt to dump any gMSA passwords readable by the user')
     ldapoptions.add_argument('--dump-adcs', action='store_true', required=False, help='Attempt to dump ADCS enrollment services and certificate templates info')
-    ldapoptions.add_argument('--add-dns-record', nargs=1, action='store', metavar=('NAME', 'IPADDR'), required=False, help='Add the <NAME> record to DNS via LDAP pointing to <IPADDR>')
+    ldapoptions.add_argument('--add-dns-record', nargs=2, action='store', metavar=('NAME', 'IPADDR'), required=False, help='Add the <NAME> record to DNS via LDAP pointing to <IPADDR>')
 
     #Common options for SMB and LDAP
     commonoptions = parser.add_argument_group("Common options for SMB and LDAP")
