@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 # Impacket - Collection of Python classes for working with network protocols.
 #
-# Copyright (C) 2023 Fortra. All rights reserved.
+# Copyright Fortra, LLC and its affiliated companies 
+#
+# All rights reserved.
 #
 # This software is provided under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -183,6 +185,7 @@ def start_servers(options, threads):
         c.setEnumLocalAdmins(options.enum_local_admins)
         c.setAddComputerSMB(options.add_computer)
         c.setDisableMulti(options.no_multirelay)
+        c.setKeepRelaying(options.keep_relaying)
         c.setEncoding(codec)
         c.setMode(mode)
         c.setAttacks(PROTOCOL_ATTACKS)
@@ -291,6 +294,7 @@ if __name__ == '__main__':
     parser.add_argument('--raw-port', type=int, help='Port to listen on raw server', default=6666)
 
     parser.add_argument('--no-multirelay', action="store_true", required=False, help='If set, disable multi-host relay (SMB and HTTP servers)')
+    parser.add_argument('--keep-relaying', action="store_true", required=False, help='If set, keeps relaying to a target even after a successful connection on it')
     parser.add_argument('-ra','--random', action='store_true', help='Randomize target selection')
     parser.add_argument('-r', action='store', metavar = 'SMBSERVER', help='Redirect HTTP requests to a file:// path on SMBSERVER')
     parser.add_argument('-l','--lootdir', action='store', type=str, required=False, metavar = 'LOOTDIR',default='.', help='Loot '
@@ -493,6 +497,12 @@ if __name__ == '__main__':
         threads.add(socks_thread)
 
     c = start_servers(options, threads)
+
+    # Log multirelay flag status
+    if options.no_multirelay:
+        logging.info("Multirelay disabled")
+    else:
+        logging.info("Multirelay enabled")
 
     print("")
     logging.info("Servers started, waiting for connections")
