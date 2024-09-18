@@ -258,12 +258,12 @@ if __name__ == '__main__':
 
     print(version.BANNER)
     #Parse arguments
-    parser = argparse.ArgumentParser(add_help = False, description = "For every connection received, this module will "
+    parser = argparse.ArgumentParser(escription = "For every connection received, this module will "
                                     "try to relay that connection to specified target(s) system or the original client (ecfirst)")
     parser._optionals.title = "Main options"
 
     #Main arguments
-    parser.add_argument("-h","--help", action="help", help='show this help message and exit')
+    #parser.add_argument("-h","--help", action="help", help='show this help message and exit')
     parser.add_argument('-ts', action='store_true', help='Adds timestamp to every logging output')
     parser.add_argument('-debug', action='store_true', help='Turn DEBUG output ON')
     parser.add_argument('-t',"--target", action='store', metavar = 'TARGET', help="Target to relay the credentials to, "
