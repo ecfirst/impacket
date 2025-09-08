@@ -1,6 +1,8 @@
 # Impacket - Collection of Python classes for working with network protocols.
 #
-# Copyright (C) 2023 Fortra. All rights reserved.
+# Copyright Fortra, LLC and its affiliated companies 
+#
+# All rights reserved.
 #
 # This software is provided under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -165,7 +167,7 @@ class Registry:
             self.fd = self.__hive
             self.__hive.open()
         else:
-            self.fd = open(hive,'rb')
+            self.fd = open(hive,'r+b')
         data = self.fd.read(4096)
         self.__regf = REG_REGF(data)
         self.indent = ''
@@ -176,7 +178,8 @@ class Registry:
             LOG.warning("Unsupported version (%d.%d) - things might not work!" % (self.__regf['MajorVersion'], self.__regf['MinorVersion']))
 
     def close(self):
-        self.fd.close()
+        if hasattr(self, 'fd'):
+            self.fd.close()
 
     def __del__(self):
         self.close()
@@ -233,6 +236,10 @@ class Registry:
     def __getData(self, offset, count):
         self.fd.seek(4096+offset, 0)
         return self.fd.read(count)[4:]
+    
+    def __setData(self, offset, value):
+        self.fd.seek(4096+offset+4, 0)
+        return self.fd.write(value)
 
     def __processDataBlocks(self,data):
         res = []
@@ -264,6 +271,23 @@ class Registry:
             return rec['OffsetData']
         else:
             return self.__getData(rec['OffsetData'], rec['DataLen']+4)
+    
+    def __setValueData(self, rec, value):
+        if len(value) != rec['DataLen']:
+            # The case of data stored in the Offset field itself still needs more
+            # work as it's necessary to identify the offset in the file to overwrite it.
+            # Leaving unimplemented for now as there's no clear use case yet.
+            # if rec['DataLen'] < 0:
+            #    if len(value) <= 4:
+            #        rec['OffsetData'] = int.from_bytes(value)
+            LOG.debug("Invalid value length received by __setValueData. Expected: %d - Got: %d" % (rec['DataLen'], len(value)))
+            # This is a much more relevant scenario that should be revisited and properly implemented.
+            raise NotImplementedError("Setting key values with differing lengths is not implemented.")
+        if rec['DataLen'] == 0:
+            LOG.debug("Received 0 length input for __setValueData.")
+            return 0
+        else:
+            return self.__setData(rec['OffsetData'], value)
 
     def __getLhHash(self, key):
         res = 0
@@ -450,10 +474,18 @@ class Registry:
 
         return resp
 
-    def getValue(self, keyValue):
-        # returns a tuple with (ValueType, ValueData) for the requested keyValue
-        regKey = ntpath.dirname(keyValue)
-        regValue = ntpath.basename(keyValue)
+    def getValue(self, keyValue, valueName=None):
+        """ returns a tuple with (ValueType, ValueData) for the requested keyValue
+            valueName is the name of the value (which can contain '\\')
+            if valueName is not  given, keyValue must be a string containing the full path to the value
+            if valueName is given, keyValue should be the string containing the path to the key containing valueName
+        """
+        if valueName is None:
+            regKey   = ntpath.dirname(keyValue)
+            regValue = ntpath.basename(keyValue)
+        else:
+            regKey = keyValue
+            regValue = valueName
 
         key = self.findKey(regKey)
 
@@ -469,6 +501,27 @@ class Registry:
                 elif regValue == 'default' and value['Flag'] <=0:
                     return value['ValueType'], self.__getValueData(value)
 
+        return None
+    
+    def setValue(self, keyValue, valueData):
+        # Returns a tuple with (ValueType, BytesWritten) for the request keyValue
+        regKey = ntpath.dirname(keyValue)
+        regValue = ntpath.basename(keyValue)
+
+        key = self.findKey(regKey)
+
+        if key is None:
+            return None
+        
+        if key['NumValues'] > 0:
+            valueList = self.__getValueBlocks(key['OffsetValueList'], key['NumValues']+1)
+
+            for value in valueList:
+                if value['Name'] == b(regValue):
+                    return value['ValueType'], self.__setValueData(value, valueData)
+                elif regValue == 'default' and value['Flag'] <=0:
+                    return value['ValueType'], self.__setValueData(value, valueData)
+        
         return None
 
     def getClass(self, className):
