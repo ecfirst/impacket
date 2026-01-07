@@ -761,14 +761,19 @@ class RemoteOperations:
         we have the correct information
         """
         if self.__smbConnection.getServerName() == '':
-            # Todo: figure out an RPC call that gives us the domain FQDN
-            # instead of the NETBIOS name as NetrWkstaGetInfo does
-            return b''
+            host, _ = self.getMachineNameAndDomain()
+            remoteName = self.__smbConnection.getRemoteName()
+            # Check if remoteName is FQDN, otherwise it will likely be the hostname only
+            if remoteName.lower().startswith(f"{host.lower()}."):
+                domain = ".".join(remoteName.split(".")[1:])
+            else:
+                return b''
         else:
             host = self.__smbConnection.getServerName()
             domain = self.__smbConnection.getServerDNSDomainName()
-            salt = b'%shost%s.%s' % (domain.upper().encode('utf-8'), host.lower().encode('utf-8'), domain.lower().encode('utf-8'))
-            return salt
+        LOG.debug(f"[Secretsdump][getMachineKerberosSalt] Host: {host} / Domain FQDN: {domain}")
+        salt = b'%shost%s.%s' % (domain.upper().encode('utf-8'), host.lower().encode('utf-8'), domain.lower().encode('utf-8'))
+        return salt
 
     def getMachineNameAndDomain(self):
         if self.__smbConnection.getServerName() == '':
@@ -1282,7 +1287,7 @@ class RemoteOperations:
 
         return remoteFileName
 
-    def createSSandDownload(self, volume, localPath):
+    def createSSandDownloadWMI(self, volume, localPath, NTDS=False):
         LOG.info('Creating SS')
         ssID = self.__wmiCreateShadow(volume)
         LOG.info('Getting SMB equivalent PATH to access remotely the SS')
@@ -1295,7 +1300,12 @@ class RemoteOperations:
                  ('%s/SYSTEM' % localPath, '%s\\System32\\config\\SYSTEM' % gmtSMBPath),
                  ('%s/SECURITY' % localPath, '%s\\System32\\config\\SECURITY' % gmtSMBPath)]
 
+        if NTDS:
+            LOG.debug('Adding NTDS Path')
+            paths.append(('%s/ntds.dit' % localPath, '%s\\NTDS\\ntds.dit' % gmtSMBPath))
+
         for p in paths:
+            LOG.debug("Downloading Remote path: %s to -> %s" % (p[1], p[0]))
             with open(p[0], 'wb') as local_file:
                 self.__smbConnection.getFile('ADMIN$', p[1], local_file.write)
 
@@ -1363,7 +1373,7 @@ class OfflineRegistry:
     def __init__(self, hiveFile = None, isRemote = False):
         self.__hiveFile = hiveFile
         if self.__hiveFile is not None:
-            self.__registryHive = winregistry.Registry(self.__hiveFile, isRemote)
+            self.__registryHive = winregistry.get_registry_parser(self.__hiveFile, isRemote)
 
     def enumKey(self, searchKey):
         parentKey = self.__registryHive.findKey(searchKey)
@@ -1453,8 +1463,13 @@ class SAMHashes(OfflineRegistry):
         # NT Time is in 100-nanosecond intervals since 1601-01-01 (UTC)
         # The difference between 1601 and 1970 is 11644473600 seconds
         nt_time = int.from_bytes(nt_time, byteorder='little')  # Convert byte string to integer
-        unix_time = (nt_time - 116444736000000000) // 10000000  # Convert to Unix time (seconds)
-        return datetime.utcfromtimestamp(unix_time)
+
+        # datetime on windows can't handle negative timestamps (i.e. before 1970), therefore we must return the 0 time directly
+        if nt_time == 0:
+            return datetime(1601, 1, 1, 0, 0, 0)
+        else:
+            unix_time = (nt_time - 116444736000000000) // 10000000  # Convert to Unix time (seconds)
+            return datetime.utcfromtimestamp(unix_time)
 
     def MD5(self, data):
         md5 = hashlib.new('md5')
@@ -2389,7 +2404,7 @@ class NTDSHashes:
         )
 
     def __init__(self, ntdsFile, bootKey, isRemote=False, history=False, noLMHash=True, remoteOps=None,
-                 useVSSMethod=False, justNTLM=False, pwdLastSet=False, resumeSession=None, outputFileName=None,
+                 useVSSMethod=False, remoteSSMethodWMINTDS=False, justNTLM=False, pwdLastSet=False, resumeSession=None, outputFileName=None,
                  justUser=None, skipUser=None,ldapFilter=None, printUserStatus=False,
                  perSecretCallback = lambda secretType, secret : _print_helper(secret),
                  resumeSessionMgr=ResumeSessionMgrInFile):
@@ -2398,6 +2413,7 @@ class NTDSHashes:
         self.__history = history
         self.__noLMHash = noLMHash
         self.__useVSSMethod = useVSSMethod
+        self.__remoteSSMethodWMINTDS = remoteSSMethodWMINTDS
         self.__remoteOps = remoteOps
         self.__pwdLastSet = pwdLastSet
         self.__printUserStatus = printUserStatus
@@ -2540,7 +2556,7 @@ class NTDSHashes:
         # This is based on [MS-SAMR] 2.2.10 Supplemental Credentials Structures
         haveInfo = False
         LOG.debug('Entering NTDSHashes.__decryptSupplementalInfo')
-        if self.__useVSSMethod is True:
+        if self.__useVSSMethod is True or self.__remoteSSMethodWMINTDS is True:
             if record[self.NAME_TO_INTERNAL['supplementalCredentials']] is not None:
                 if len(unhexlify(record[self.NAME_TO_INTERNAL['supplementalCredentials']])) > 24:
                     if record[self.NAME_TO_INTERNAL['userPrincipalName']] is not None:
@@ -2656,7 +2672,7 @@ class NTDSHashes:
 
     def __decryptHash(self, record, prefixTable=None, outputFile=None):
         LOG.debug('Entering NTDSHashes.__decryptHash')
-        if self.__useVSSMethod is True:
+        if self.__useVSSMethod is True or self.__remoteSSMethodWMINTDS is True:
             LOG.debug('Decrypting hash for user: %s' % record[self.NAME_TO_INTERNAL['name']])
 
             sid = SAMR_RPC_SID(unhexlify(record[self.NAME_TO_INTERNAL['objectSid']]))
@@ -2905,9 +2921,9 @@ class NTDSHashes:
             else:
                 skipUsers = self.__skipUser.split(',')
         
-        if self.__useVSSMethod is True:
+        if self.__useVSSMethod is True or self.__remoteSSMethodWMINTDS is True:
             if self.__NTDS is None:
-                # No NTDS.dit file provided and were asked to use VSS
+                # No NTDS.dit file provided and were asked to use VSS or Shadow Snapshot Method via WMI
                 return
         else:
             if self.__NTDS is None:
@@ -2946,7 +2962,7 @@ class NTDSHashes:
                     clearTextOutputFile = openFile(self.__outputFileName+'.ntds.cleartext',mode)
 
             LOG.info('Dumping Domain Credentials (domain\\uid:rid:lmhash:nthash)')
-            if self.__useVSSMethod:
+            if self.__useVSSMethod or self.__remoteSSMethodWMINTDS:
                 # We start getting rows from the table aiming at reaching
                 # the pekList. If we find users records we stored them
                 # in a temp list for later process.
@@ -3178,7 +3194,7 @@ class NTDSHashes:
             LOG.debug("Finished processing and printing user's hashes, now printing supplemental information")
             # Now we'll print the Kerberos keys. So we don't mix things up in the output.
             if len(self.__kerberosKeys) > 0:
-                if self.__useVSSMethod is True:
+                if self.__useVSSMethod is True or self.__remoteSSMethodWMINTDS is True:
                     LOG.info('Kerberos keys from %s ' % self.__NTDS)
                 else:
                     LOG.info('Kerberos keys grabbed')
@@ -3188,7 +3204,7 @@ class NTDSHashes:
 
             # And finally the cleartext pwds
             if len(self.__clearTextPwds) > 0:
-                if self.__useVSSMethod is True:
+                if self.__useVSSMethod is True or self.__remoteSSMethodWMINTDS is True:
                     LOG.info('ClearText password from %s ' % self.__NTDS)
                 else:
                     LOG.info('ClearText passwords grabbed')
@@ -3228,7 +3244,7 @@ class LocalOperations:
         # Local Version whenever we are given the files directly
         bootKey = b''
         tmpKey = b''
-        winreg = winregistry.Registry(self.__systemHive, False)
+        winreg = winregistry.get_registry_parser(self.__systemHive, False)
         # We gotta find out the Current Control Set
         currentControlSet = winreg.getValue('\\Select\\Current')[1]
         currentControlSet = "ControlSet%03d" % currentControlSet
@@ -3252,7 +3268,7 @@ class LocalOperations:
 
     def checkNoLMHashPolicy(self):
         LOG.debug('Checking NoLMHash Policy')
-        winreg = winregistry.Registry(self.__systemHive, False)
+        winreg = winregistry.get_registry_parser(self.__systemHive, False)
         # We gotta find out the Current Control Set
         currentControlSet = winreg.getValue('\\Select\\Current')[1]
         currentControlSet = "ControlSet%03d" % currentControlSet

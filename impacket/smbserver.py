@@ -57,7 +57,7 @@ from impacket.nt_errors import STATUS_NO_MORE_FILES, STATUS_NETWORK_NAME_DELETED
     STATUS_FILE_IS_A_DIRECTORY, STATUS_NOT_IMPLEMENTED, STATUS_INVALID_HANDLE, STATUS_OBJECT_NAME_COLLISION, \
     STATUS_NO_SUCH_FILE, STATUS_CANCELLED, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_SUCCESS, STATUS_ACCESS_DENIED, \
     STATUS_NOT_SUPPORTED, STATUS_INVALID_DEVICE_REQUEST, STATUS_FS_DRIVER_REQUIRED, STATUS_INVALID_INFO_CLASS, \
-    STATUS_LOGON_FAILURE, STATUS_OBJECT_PATH_SYNTAX_BAD
+    STATUS_LOGON_FAILURE, STATUS_OBJECT_PATH_SYNTAX_BAD, STATUS_END_OF_FILE
 
 # Setting LOG to current's module name
 LOG = logging.getLogger(__name__)
@@ -72,6 +72,12 @@ STATUS_SMB_BAD_TID = 0x00050002
 # There are some common functions that can be accessed from more than one SMB
 # command (or either TRANSACTION). That's why I'm putting them here
 # TODO: Return NT ERROR Codes
+
+def getFileTime(t):
+    return smb.POSIXtoFT(t)
+
+def getUnixTime(t):
+    return smb.FTtoPOSIX(t)
 
 def computeNTLMv2(identity, lmhash, nthash, serverChallenge, authenticateMessage, ntlmChallenge, type1):
     # Let's calculate the NTLMv2 Response
@@ -3604,6 +3610,8 @@ class SMB2Commands:
                     respSMBCommand['DataLength'] = len(content)
                     respSMBCommand['DataRemaining'] = 0
                     respSMBCommand['Buffer'] = content
+                    if len(content) == 0:
+                        errorCode = STATUS_END_OF_FILE
                 except Exception as e:
                     smbServer.log('SMB2_READ: %s ' % e, logging.ERROR)
                     errorCode = STATUS_ACCESS_DENIED
@@ -3989,7 +3997,22 @@ class SMBSERVERHandler(socketserver.BaseRequestHandler):
 
 class SMBSERVER(socketserver.ThreadingMixIn, socketserver.TCPServer):
     # class SMBSERVER(socketserver.ForkingMixIn, socketserver.TCPServer):
-    def __init__(self, server_address, handler_class=SMBSERVERHandler, config_parser=None):
+    def __init__(self, server_address, handler_class=SMBSERVERHandler, config_parser=None, ipv6=False):
+        # duplicate of https://github.com/fortra/impacket/blob/082dca34a376d13c70b0df6a1d9048ce98fe9498/impacket/examples/utils.py#L323
+        # didn't reuse that same function in order not to make a class from the library depend on one from impacket/examples
+        if ipv6:
+            self.address_family = socket.AF_INET6
+            # scope_id (after %) can be present or not - if not, default: 0
+            ip_parts = server_address[0].split('%')
+            scope_id = ip_parts[1] if len(ip_parts) == 2 else 0
+            # convert scope_id to int (expected by s.connect)
+            # if exception, assume the interface name and convert to index
+            try:
+                scope_id = int(scope_id)
+            except ValueError:
+                scope_id = socket.if_nametoindex(scope_id)
+            server_address = server_address + (0, scope_id)
+
         socketserver.TCPServer.allow_reuse_address = True
         socketserver.TCPServer.__init__(self, server_address, handler_class)
 
@@ -4880,10 +4903,9 @@ class SimpleSMBServer:
     :param string configFile: a file with all the servers' configuration. If no file specified, this class will create the basic parameters needed to run. You will need to add your shares manually tho. See addShare() method
     """
 
-    def __init__(self, listenAddress='0.0.0.0', listenPort=445, configFile='', smbserverclass=SMBSERVER):
+    def __init__(self, listenAddress='0.0.0.0', listenPort=445, configFile='', smbserverclass=SMBSERVER, ipv6=False):
         if configFile != '':
-            #self.__server = SMBSERVER((listenAddress, listenPort))
-            self.__server = smbserverclass((listenAddress, listenPort))
+            self.__server = smbserverclass((listenAddress, listenPort), ipv6=ipv6)
             self.__server.processConfigFile(configFile)
             self.__smbConfig = None
         else:
@@ -4908,7 +4930,7 @@ class SimpleSMBServer:
             self.__smbConfig.set('IPC$', 'read only', 'yes')
             self.__smbConfig.set('IPC$', 'share type', '3')
             self.__smbConfig.set('IPC$', 'path', '')
-            self.__server = smbserverclass((listenAddress, listenPort), config_parser=self.__smbConfig)
+            self.__server = smbserverclass((listenAddress, listenPort), config_parser=self.__smbConfig, ipv6=ipv6)
             self.__server.processConfigFile()
 
         # Now we have to register the MS-SRVS server. This specially important for
